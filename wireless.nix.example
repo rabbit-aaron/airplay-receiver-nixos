@@ -1,0 +1,7 @@
+{
+  networking.wireless.networks = {
+    "MyNetwork" = {
+      pskRaw = "generate with: wpa_passphrase MyNetwork MyPassword";
+    };
+  };
+}
