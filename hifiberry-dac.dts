@@ -45,6 +45,7 @@
                     sound-dai = <&pcm5102a_codec>;
                 };
             };
+
         };
     };
 };

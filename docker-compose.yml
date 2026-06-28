@@ -1,0 +1,21 @@
+services:
+  builder:
+    image: ${NIX_IMAGE:-nixos/nix:latest}
+    platform: linux/arm64
+    working_dir: /work
+    environment:
+      PI_HOST: ${PI_HOST:-rabbit@192.168.1.37}
+      FLAKE_ATTR: ${FLAKE_ATTR:-marshall}
+      BUILD_ONLY: ${BUILD_ONLY:-0}
+      PUSH_ONLY: ${PUSH_ONLY:-0}
+      RELOCK: ${RELOCK:-}
+    volumes:
+      - nix-store:/nix             # persistent store: only the first build is cold
+      - nix-eval-cache:/root/.cache/nix
+      - .:/work
+      - ${HOME}/.ssh:/ssh-in:ro
+    command: ["sh", "/work/container-build.sh"]
+
+volumes:
+  nix-store:
+  nix-eval-cache:

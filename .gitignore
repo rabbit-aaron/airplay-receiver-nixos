@@ -1,2 +1,6 @@
 wireless.nix
 hardware-configuration.nix
+result
+result-*
+.artifact
+.artifact-path

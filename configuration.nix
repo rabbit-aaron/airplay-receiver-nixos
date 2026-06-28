@@ -4,10 +4,27 @@
 
 { config, lib, pkgs, ... }:
 
+let
+  # shairport-sync's config file lives in the world-readable /nix/store, so the
+  # MQTT password is a @MQTT_PASSWORD@ placeholder there. At service start this
+  # splices the real password (from the 0600 /etc/nix-env/shairport-sync.env)
+  # into a copy in the runtime dir, readable only by the shairport user.
+  shairportConfgen = pkgs.writeShellScript "shairport-mqtt-config" ''
+    set -eu
+    . /etc/nix-env/shairport-sync.env   # provides MQTT_PASSWORD
+    out=/run/shairport-sync/shairport-sync.conf
+    ${pkgs.gnused}/bin/sed "s|@MQTT_PASSWORD@|$MQTT_PASSWORD|" \
+      /etc/shairport-sync.conf > "$out"
+    ${pkgs.coreutils}/bin/chown shairport:shairport "$out"
+    ${pkgs.coreutils}/bin/chmod 600 "$out"
+  '';
+in
 {
   imports = [
     ./hardware-configuration.nix
     ./wireless.nix
+    ./stanmore2.nix
+    ./volume-sync.nix
   ];
 
   swapDevices = [
@@ -23,8 +40,10 @@
     memoryPercent = 100;
   };
 
-  # I used this so Claude can debug easily
-  # security.sudo.wheelNeedsPassword = false;
+  security.sudo.wheelNeedsPassword = false;
+
+  # Allow pushing remotely-built (unsigned) closures from deploy.sh.
+  nix.settings.trusted-users = [ "root" "rabbit" ];
 
   networking.timeServers = ["192.168.1.1"];
 
@@ -32,7 +51,15 @@
   boot.loader.grub.enable = false;
   # Enables the generation of /boot/extlinux/extlinux.conf
   boot.loader.generic-extlinux-compatible.enable = true;
+  boot.loader.generic-extlinux-compatible.configurationLimit = 5;
   boot.loader.timeout = 1;
+
+  # Garbage-collect old store paths so pushed generations don't accumulate.
+  nix.gc = {
+    automatic = true;
+    dates = "weekly";
+    options = "--delete-older-than 30d";
+  };
 
   boot.blacklistedKernelModules = [ "snd_bcm2835" ];
   hardware.deviceTree = {
@@ -43,6 +70,17 @@
         dtsFile = ./hifiberry-dac.dts;
       }
     ];
+  };
+
+  # Bluetooth — onboard Pi 3 radio (BCM43438 on the PL011 UART / ttyAMA0).
+  # The mainline bcm2837-rpi-3-b DTB has the bluetooth serdev node, so the btbcm
+  # driver binds automatically; it just needs the vendor firmware blob present.
+  hardware.enableRedistributableFirmware = true;
+  hardware.firmware = [ pkgs.raspberrypiWirelessFirmware ];  # provides BCM43430A1.hcd
+  hardware.bluetooth = {
+    enable = true;
+    powerOnBoot = true;
+    settings.General.Experimental = true;  # extra BLE D-Bus interfaces (advertising, etc.)
   };
 
 
@@ -123,22 +161,74 @@
   services.shairport-sync = {
     enable = true;
     package = pkgs.shairport-sync.override { enableAirplay2 = true; };
-    arguments = "-a Marshall";
     openFirewall = true;
     settings = {
       general = {
+        name = "Marshall";
         output_backend = "alsa";
         audio_backend_buffer_desired_length_in_seconds = 0.1;
         audio_backend_silent_lead_in_time = 0.0;
+        # Don't attenuate the audio (stays at 100%); volume-sync drives the
+        # speaker's hardware volume from the AirPlay slider over MQTT instead.
+        ignore_volume_control = "yes";
       };
       alsa = {
         output_device = "hw:0";
+      };
+      # Publish the AirPlay volume (volume-sync consumes marshall/volume) and
+      # accept remote control over MQTT. password is a placeholder spliced in at
+      # runtime so the real secret stays out of the store (see shairportConfgen).
+      mqtt = {
+        enabled = "yes";
+        hostname = "192.168.1.3";
+        port = 1883;
+        username = "RabbitMQTT";
+        password = "@MQTT_PASSWORD@";
+        topic = "marshall";
+        publish_parsed = "yes";
+        enable_remote = "yes";
       };
     };
   };
   systemd.services.shairport-sync.serviceConfig = {
     StateDirectory = "shairport-sync";
+    Restart = lib.mkForce "always";
     RestartSec = 3;
+    # "+" runs as root so it can read the 0600 secret; the daemon then runs from
+    # the spliced runtime config instead of the placeholder one in the store.
+    ExecStartPre = "+${shairportConfgen}";
+    ExecStart = lib.mkForce
+      "${lib.getExe config.services.shairport-sync.package} -c /run/shairport-sync/shairport-sync.conf";
+  };
+
+  # Watchdog: shairport-sync can wedge — process alive but no longer connectable,
+  # so systemd's Restart= never fires. The reliable "AirPlay is available" signal
+  # is a resolved _raop._tcp mDNS record for this host; if it disappears, restart.
+  systemd.services.shairport-watchdog = {
+    description = "Restart shairport-sync if its AirPlay mDNS advertisement disappears";
+    after = [ "shairport-sync.service" "avahi-daemon.service" ];
+    serviceConfig.Type = "oneshot";
+    path = [ pkgs.avahi pkgs.systemd ];
+    script = ''
+      check() {
+        avahi-browse -ptr _raop._tcp 2>/dev/null \
+          | grep '^=;' | grep -q ';${config.networking.hostName}.local;'
+      }
+      # Two probes so a single flaky mDNS lookup doesn't trigger a needless
+      # restart (which would cut any active stream).
+      if check; then exit 0; fi
+      sleep 5
+      if check; then exit 0; fi
+      echo "shairport-sync AirPlay advertisement missing — restarting"
+      systemctl restart shairport-sync.service
+    '';
+  };
+  systemd.timers.shairport-watchdog = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "2min";
+      OnUnitActiveSec = "2min";
+    };
   };
   systemd.services.nqptp = {
     description = "NQPTP - PTP timing for AirPlay 2";
