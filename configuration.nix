@@ -187,6 +187,8 @@ in
         topic = "marshall";
         publish_parsed = "yes";
         enable_remote = "yes";
+        publish_cover = "yes";
+        enable_autodiscovery = "yes";
       };
     };
   };

@@ -15,6 +15,18 @@ module + `nix-env/*.env` secret file:
   shairport-sync runs `ignore_volume_control = "yes"` so this drives the
   speaker's hardware volume directly.
 
+Both sidecars override the module's `package` with a prebuilt binary `fetchurl`'d
+from GitHub Releases, so no Rust toolchain enters the build closure (the crane
+source build is never evaluated — option defaults are lazy). Differences:
+- **volume-sync** ships a static aarch64-**musl** binary that runs as-is.
+- **stanmore2** ships a glibc (aarch64-**gnu**) binary, so its derivation adds
+  `autoPatchelfHook` + `buildInputs = [ dbus stdenv.cc.cc.lib ]` to fix the ELF
+  interpreter and link `libdbus-1` (btleplug's BlueZ backend) at runtime.
+
+Bump either per release by editing `version` + `hash` in its `.nix` (no `RELOCK`
+needed — only the fetchurl hash changes); get the hash with
+`nix store prefetch-file --name source <release-tarball-url>`.
+
 ## Deploy workflow
 
 The Mac has no Nix. `deploy.sh` runs the build inside an `nixos/nix` arm64

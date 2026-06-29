@@ -1,7 +1,34 @@
 { lib, pkgs, ... }:
+let
+  version = "0.1.0";
+  target = "aarch64-unknown-linux-gnu";
+
+  # Prebuilt binary from GitHub Releases. Overriding the module's `package` with
+  # this means the crane source build is never evaluated (option defaults are
+  # lazy), so no Rust toolchain enters the build closure. Unlike volume-sync's
+  # static musl binary, this is a glibc dynamic build, so autoPatchelfHook fixes
+  # the ELF interpreter and links libdbus (btleplug's BlueZ backend) at runtime.
+  stanmore2-bin = pkgs.stdenv.mkDerivation {
+    pname = "stanmore2";
+    inherit version;
+    src = pkgs.fetchurl {
+      url = "https://github.com/rabbit-aaron/marshall-stanmore-2-rust/releases/download/v${version}/stanmore2-v${version}-${target}.tar.gz";
+      hash = "sha256-8sQelhrYOCY1P3nPUE51cQE0qFbp0Ug1mxSasYbdemw=";
+    };
+    nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+    buildInputs = [ pkgs.dbus pkgs.stdenv.cc.cc.lib ];  # libdbus-1, libgcc_s
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 stanmore2 $out/bin/stanmore2
+      runHook postInstall
+    '';
+    meta.mainProgram = "stanmore2";
+  };
+in
 {
   services.stanmore2 = {
     enable = true;
+    package = stanmore2-bin;  # prebuilt binary, not the source build
     # Required by the module, but overridden at runtime: the real BLE_ADDRESS
     # (and all other config) comes from /etc/nix-env/stanmore2.env below.
     bleAddress = "via-environmentFile";
