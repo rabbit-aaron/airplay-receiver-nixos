@@ -1,6 +1,6 @@
 { lib, pkgs, ... }:
 let
-  version = "0.1.0";
+  version = "0.1.1";
   target = "aarch64-unknown-linux-gnu";
 
   # Prebuilt binary from GitHub Releases. Overriding the module's `package` with
@@ -13,7 +13,7 @@ let
     inherit version;
     src = pkgs.fetchurl {
       url = "https://github.com/rabbit-aaron/marshall-stanmore-2-rust/releases/download/v${version}/stanmore2-v${version}-${target}.tar.gz";
-      hash = "sha256-8sQelhrYOCY1P3nPUE51cQE0qFbp0Ug1mxSasYbdemw=";
+      hash = "sha256-3q0xIkmoihOqbIl7ialx07sqfSxvG+UQbGBoClzpjPQ=";
     };
     nativeBuildInputs = [ pkgs.autoPatchelfHook ];
     buildInputs = [ pkgs.dbus pkgs.stdenv.cc.cc.lib ];  # libdbus-1, libgcc_s
